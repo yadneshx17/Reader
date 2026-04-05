@@ -6,6 +6,8 @@ export interface AppSettings {
   defaultTheme: PdfTheme;
   defaultLayout: PageLayout;
   showThumbnails: boolean;
+  ollamaAutoStart: boolean;
+  translateLanguage: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -13,6 +15,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultTheme: "classic",
   defaultLayout: "single",
   showThumbnails: true,
+  ollamaAutoStart: false,
+  translateLanguage: "English",
 };
 
 export interface OutlineItem {

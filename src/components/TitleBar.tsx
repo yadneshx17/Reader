@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BookOpen, Minus, Square, X, House, Plus, Settings } from "lucide-react";
-import { useState } from "react";
+import ollamaLogo from "../assets/ollama.png";
+import { useState, useEffect } from "react";
 import type { PdfFile } from "../types";
 
 type DragStyle = React.CSSProperties & { WebkitAppRegion?: "drag" | "no-drag" };
@@ -130,6 +131,9 @@ export default function TitleBar({
         </button>
       </div>
 
+      {/* Ollama indicator */}
+      <OllamaIndicator />
+
       {/* Window controls */}
       <div style={{ display: "flex", flexShrink: 0, WebkitAppRegion: "no-drag" } as DragStyle}>
         {[
@@ -162,6 +166,43 @@ export default function TitleBar({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function OllamaIndicator() {
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const r = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+        if (!cancelled) setRunning(r.ok);
+      } catch {
+        if (!cancelled) setRunning(false);
+      }
+    }
+    check();
+    const id = setInterval(check, 10000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  if (!running) return null;
+
+  return (
+    <div
+      title="Ollama is running"
+      style={{
+        display: "flex", alignItems: "center",
+        padding: "0 8px", flexShrink: 0,
+        WebkitAppRegion: "no-drag",
+        opacity: 0.55,
+      } as DragStyle}
+    >
+      <div style={{ width: 17, height: 17, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <img src={ollamaLogo} width={11} height={11} style={{ display: "block" }} alt="Ollama" />
+        </div>
     </div>
   );
 }

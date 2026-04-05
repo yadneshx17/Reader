@@ -1,10 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Layers, CheckCircle, Circle } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import type { PdfFile, PdfTheme, Annotation, OutlineItem, LibraryStore } from "./types";
 import { useSettings } from "./useSettings";
 import { AnnotationTool, PageLayout } from "./components/Toolbar";
+import { HoverBtn } from "./ui";
 import TitleBar from "./components/TitleBar";
 import Sidebar from "./components/Sidebar";
 import Toolbar from "./components/Toolbar";
@@ -16,38 +17,17 @@ import PdfSearch from "./components/PdfSearch";
 
 interface OpenedPdf { data: string; title: string | null; urls: string[]; outline: OutlineItem[]; }
 
+
 function ArtifactsToggle({ active, onClick }: { active: boolean; onClick: () => void }) {
   return (
-    <button
+    <HoverBtn
+      active={active}
       onClick={onClick}
       title="Artifacts — links, repos, datasets"
-      style={{
-        position: "absolute", top: 12, right: 12, zIndex: 10,
-        width: 32, height: 32, borderRadius: 8,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        background: active ? "var(--bg-active)" : "var(--bg-raised)",
-        border: `1px solid ${active ? "var(--border-default)" : "var(--border-faint)"}`,
-        color: active ? "var(--text-white)" : "var(--text-dim)",
-        cursor: "pointer",
-        transition: "all var(--duration-fast) var(--ease-out)",
-      }}
-      onMouseEnter={e => {
-        if (!active) {
-          (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)";
-          (e.currentTarget as HTMLElement).style.borderColor = "var(--border-default)";
-          (e.currentTarget as HTMLElement).style.color = "var(--text-primary)";
-        }
-      }}
-      onMouseLeave={e => {
-        if (!active) {
-          (e.currentTarget as HTMLElement).style.background = "var(--bg-raised)";
-          (e.currentTarget as HTMLElement).style.borderColor = "var(--border-faint)";
-          (e.currentTarget as HTMLElement).style.color = "var(--text-dim)";
-        }
-      }}
+      style={{ position: "absolute", top: 12, right: 12, zIndex: 10, width: 32, height: 32, borderRadius: 8 }}
     >
       <Layers size={13} strokeWidth={1.8} />
-    </button>
+    </HoverBtn>
   );
 }
 
@@ -63,6 +43,15 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const { settings, updateSettings: _updateSettings } = useSettings();
 
+  // Auto-start Ollama if enabled in settings
+  useEffect(() => {
+    if (!settings.ollamaAutoStart) return;
+    const controller = new AbortController();
+    fetch("http://localhost:11434/api/tags", { signal: controller.signal })
+      .catch(() => { if (!controller.signal.aborted) invoke("start_ollama").catch(() => {}); });
+    return () => controller.abort();
+  }, [settings.ollamaAutoStart]);
+
   const updateSettings = useCallback((patch: Partial<typeof settings>) => {
     _updateSettings(patch);
     // Apply reading-related changes to all currently open files
@@ -77,11 +66,14 @@ export default function App() {
   const [readPages, setReadPages] = useState<Record<string, number[]>>({});
   const libraryRef = useRef<LibraryStore | null>(null);
 
-  const activeFile = files.find((f) => f.id === activeFileId) ?? null;
+  const activeFile = useMemo(() => files.find((f) => f.id === activeFileId) ?? null, [files, activeFileId]);
   const isHome = (showHome || !activeFileId) && !showSettings;
   const isSettings = showSettings;
-  const fileTotalPages: Record<string, number> = {};
-  for (const f of files) fileTotalPages[f.diskPath] = f.totalPages;
+  const fileTotalPages = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const f of files) map[f.diskPath] = f.totalPages;
+    return map;
+  }, [files]);
 
   // Load library once on mount; keep a ref so saves can merge without re-fetching
   useEffect(() => {
@@ -220,19 +212,26 @@ export default function App() {
     invoke("save_library", { store }).catch(() => {});
   }
 
+  const filesRef = useRef(files);
+  useEffect(() => { filesRef.current = files; }, [files]);
+
   const addAnnotation = useCallback((ann: Annotation) => {
-    if (!activeFileId || !activeFile) return;
-    const anns = [...activeFile.annotations, ann];
+    if (!activeFileId) return;
+    const file = filesRef.current.find(f => f.id === activeFileId);
+    if (!file) return;
+    const anns = [...file.annotations, ann];
     updateFile(activeFileId, { annotations: anns });
-    persistAnnotations(activeFile.diskPath, anns);
-  }, [activeFileId, activeFile, updateFile]);
+    persistAnnotations(file.diskPath, anns);
+  }, [activeFileId, updateFile]);
 
   const deleteAnnotation = useCallback((id: string) => {
-    if (!activeFileId || !activeFile) return;
-    const anns = activeFile.annotations.filter(a => a.id !== id);
+    if (!activeFileId) return;
+    const file = filesRef.current.find(f => f.id === activeFileId);
+    if (!file) return;
+    const anns = file.annotations.filter(a => a.id !== id);
     updateFile(activeFileId, { annotations: anns });
-    persistAnnotations(activeFile.diskPath, anns);
-  }, [activeFileId, activeFile, updateFile]);
+    persistAnnotations(file.diskPath, anns);
+  }, [activeFileId, updateFile]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -335,36 +334,18 @@ export default function App() {
                 {(() => {
                   const isRead = (readPages[activeFile.diskPath] ?? []).includes(activeFile.currentPage);
                   return (
-                    <button
+                    <HoverBtn
+                      active={isRead}
                       onClick={() => togglePageRead(activeFile.diskPath, activeFile.currentPage)}
                       title={isRead ? "Unmark page as read" : "Mark page as read"}
                       style={{
                         position: "absolute", top: 52, right: 12, zIndex: 10,
                         width: 32, height: 32, borderRadius: 8,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        background: isRead ? "var(--bg-active)" : "var(--bg-raised)",
-                        border: `1px solid ${isRead ? "var(--border-default)" : "var(--border-faint)"}`,
-                        color: isRead ? "#4A9B7F" : "var(--text-dim)",
-                        cursor: "pointer",
-                        transition: "all var(--duration-fast) var(--ease-out)",
-                      }}
-                      onMouseEnter={e => {
-                        if (!isRead) {
-                          (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)";
-                          (e.currentTarget as HTMLElement).style.borderColor = "var(--border-default)";
-                          (e.currentTarget as HTMLElement).style.color = "var(--text-primary)";
-                        }
-                      }}
-                      onMouseLeave={e => {
-                        if (!isRead) {
-                          (e.currentTarget as HTMLElement).style.background = "var(--bg-raised)";
-                          (e.currentTarget as HTMLElement).style.borderColor = "var(--border-faint)";
-                          (e.currentTarget as HTMLElement).style.color = "var(--text-dim)";
-                        }
+                        color: isRead ? "#4A9B7F" : undefined,
                       }}
                     >
                       {isRead ? <CheckCircle size={13} strokeWidth={2} /> : <Circle size={13} strokeWidth={1.8} />}
-                    </button>
+                    </HoverBtn>
                   );
                 })()}
 
@@ -385,6 +366,7 @@ export default function App() {
                   onZoomChange={z => updateFile(activeFile.id, { zoom: z })}
                   onOutlineLoad={(outline: OutlineItem[]) => updateFile(activeFile.id, { outline })}
                   onPageChange={page => { updateFile(activeFile.id, { currentPage: page }); persistLastPage(activeFile.diskPath, page); }}
+                  translateLanguage={settings.translateLanguage}
                 />
                 <Toolbar
                   currentPage={activeFile.currentPage}

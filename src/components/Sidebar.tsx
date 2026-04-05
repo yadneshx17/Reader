@@ -1,6 +1,6 @@
 import { Plus, FolderOpen, PanelLeftClose, PanelLeftOpen, ChevronRight } from "lucide-react";
 import { PdfFile, OutlineItem } from "../types";
-import { useState, useEffect } from "react";
+import { useState, useEffect, memo } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 
 interface SidebarProps {
@@ -32,7 +32,7 @@ async function resolveDestPage(pdf: pdfjsLib.PDFDocumentProxy, dest: OutlineItem
   }
 }
 
-function OutlineNode({
+const OutlineNode = memo(function OutlineNode({
   item, depth, pdfDoc, onPageJump, currentPage,
 }: {
   item: OutlineItem;
@@ -106,16 +106,23 @@ function OutlineNode({
       ))}
     </div>
   );
-}
+}); // end memo(OutlineNode)
 
 export default function Sidebar({
   activeFile, collapsed, onToggleCollapse, onOpenFile, onPageJump,
 }: SidebarProps) {
 
-  // Load pdf doc proxy for destination resolution
+  // Load pdf doc proxy for destination resolution only when needed.
+  // Rust-generated outlines use __p__ prefix and don't need PDF resolution.
   const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   useEffect(() => {
     if (!activeFile) { setPdfDoc(null); return; }
+    // Check if all destinations are already __p__ encoded — skip load if so
+    const needsResolution = activeFile.outline.some(function needsRes(item: import("../types").OutlineItem): boolean {
+      if (item.dest != null && !(typeof item.dest === "string" && item.dest.startsWith("__p__"))) return true;
+      return item.items?.some(needsRes) ?? false;
+    });
+    if (!needsResolution) { setPdfDoc(null); return; }
     let cancelled = false;
     pdfjsLib.getDocument({ url: activeFile.path }).promise
       .then(doc => { if (!cancelled) setPdfDoc(doc); })

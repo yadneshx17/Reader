@@ -2,14 +2,15 @@ import { useState } from "react";
 import {
   BookOpen, RefreshCw, CheckCircle, AlertCircle,
   ExternalLink, Download, Shield, Info, Sparkles,
-  FileText, AlignJustify, Sun,
+  FileText, AlignJustify, Sun, Cpu,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, PdfTheme, PageLayout } from "../types";
+import { Toggle, SegmentedControl, InfoBox, LinkBtn } from "../ui";
 
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.5.0";
 
-type NavItem = "general" | "reading" | "library" | "updates" | "privacy" | "shortcuts";
+type NavItem = "general" | "reading" | "ai" | "library" | "updates" | "privacy" | "shortcuts";
 
 type UpdateState =
   | { status: "idle" }
@@ -26,6 +27,7 @@ function openUrl(url: string) {
 const NAV: { id: NavItem; label: string }[] = [
   { id: "general",   label: "General"    },
   { id: "reading",   label: "Reading"    },
+  { id: "ai",        label: "AI"         },
   { id: "library",   label: "Library"    },
   { id: "updates",   label: "Updates"    },
   { id: "privacy",   label: "Privacy"    },
@@ -106,6 +108,7 @@ export default function SettingsPage({ settings, onUpdate }: Props) {
         <div style={{ maxWidth: 600, padding: "40px 48px 80px" }}>
           {active === "general"   && <GeneralPanel />}
           {active === "reading"   && <ReadingPanel settings={settings} onUpdate={onUpdate} />}
+          {active === "ai"        && <AIPanel settings={settings} onUpdate={onUpdate} />}
           {active === "library"   && <LibraryPanel settings={settings} onUpdate={onUpdate} />}
           {active === "updates"   && <UpdatesPanel state={updateState} onCheck={checkForUpdate} onInstall={installUpdate} />}
           {active === "privacy"   && <PrivacyPanel />}
@@ -145,72 +148,6 @@ function Row({ label, sub, children }: { label: string; sub?: string; children?:
   );
 }
 
-function LinkBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: 6, background: "var(--bg-raised)", border: "1px solid var(--border-faint)", color: "var(--text-dim)", fontSize: 12, fontWeight: 500, transition: "all var(--duration-fast) var(--ease-out)" }}
-      onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = "var(--bg-hover)"; el.style.borderColor = "var(--border-default)"; el.style.color = "var(--text-primary)"; }}
-      onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = "var(--bg-raised)"; el.style.borderColor = "var(--border-faint)"; el.style.color = "var(--text-dim)"; }}
-    >{children}</button>
-  );
-}
-
-function InfoBox({ icon, accent, children }: { icon: React.ReactNode; accent?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "12px 14px", marginBottom: 8, background: accent ? `${accent}0c` : "var(--bg-raised)", border: `1px solid ${accent ? `${accent}25` : "var(--border-faint)"}`, borderRadius: 9 }}>
-      <div style={{ flexShrink: 0, paddingTop: 1 }}>{icon}</div>
-      <p style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.65, margin: 0 }}>{children}</p>
-    </div>
-  );
-}
-
-// ── Toggle switch ─────────────────────────────────────────────────────────────
-
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!value)}
-      style={{
-        width: 40, height: 22, borderRadius: 11, border: "none",
-        background: value ? "#4A9B7F" : "var(--bg-active)",
-        position: "relative", cursor: "pointer", flexShrink: 0,
-        transition: "background 200ms var(--ease-out)",
-      }}
-    >
-      <div style={{
-        position: "absolute", top: 2, left: value ? 20 : 2,
-        width: 18, height: 18, borderRadius: "50%", background: "#fff",
-        transition: "left 200ms var(--ease-out)",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-      }} />
-    </button>
-  );
-}
-
-// ── Segmented control ─────────────────────────────────────────────────────────
-
-function SegmentedControl<T extends string>({ options, value, onChange }: {
-  options: { value: T; label: string; icon?: React.ReactNode }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div style={{ display: "flex", gap: 2, background: "var(--bg-active)", borderRadius: 8, padding: 2 }}>
-      {options.map(opt => (
-        <button key={opt.value} onClick={() => onChange(opt.value)} style={{
-          display: "inline-flex", alignItems: "center", gap: 5,
-          padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-          background: value === opt.value ? "var(--bg-raised)" : "transparent",
-          border: value === opt.value ? "1px solid var(--border-soft)" : "1px solid transparent",
-          color: value === opt.value ? "var(--text-white)" : "var(--text-dim)",
-          cursor: "pointer", transition: "all var(--duration-fast) var(--ease-out)",
-          boxShadow: value === opt.value ? "0 1px 4px rgba(0,0,0,0.25)" : "none",
-        }}>
-          {opt.icon}{opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // ── General panel ─────────────────────────────────────────────────────────────
 
@@ -330,6 +267,55 @@ function ReadingPanel({ settings, onUpdate }: { settings: AppSettings; onUpdate:
             })}
           </div>
         </div>
+      </Section>
+    </>
+  );
+}
+
+// ── AI panel ──────────────────────────────────────────────────────────────────
+
+const LANGUAGES = [
+  "English", "Hindi", "Spanish", "French", "German", "Portuguese", "Arabic",
+  "Chinese (Simplified)", "Chinese (Traditional)", "Japanese", "Korean",
+  "Russian", "Italian", "Dutch", "Turkish", "Polish", "Swedish", "Vietnamese",
+];
+
+function AIPanel({ settings, onUpdate }: { settings: AppSettings; onUpdate: (p: Partial<AppSettings>) => void }) {
+  return (
+    <>
+      <PanelTitle>AI</PanelTitle>
+      <Section title="Ollama">
+        <Row
+          label="Start Ollama at launch"
+          sub="Automatically starts the Ollama server when the app opens so AI is ready when you select text."
+        >
+          <Toggle value={settings.ollamaAutoStart} onChange={v => onUpdate({ ollamaAutoStart: v })} />
+        </Row>
+      </Section>
+      <Section title="Translation">
+        <Row label="Target language" sub="The language text will be translated into when using the Translate action.">
+          <select
+            value={settings.translateLanguage}
+            onChange={e => onUpdate({ translateLanguage: e.target.value })}
+            style={{
+              background: "var(--bg-active)", border: "1px solid var(--border-default)",
+              borderRadius: 6, color: "var(--text-primary)", fontSize: 12,
+              padding: "4px 8px", cursor: "pointer", outline: "none",
+            }}
+          >
+            {LANGUAGES.map(lang => (
+              <option key={lang} value={lang}>{lang}</option>
+            ))}
+          </select>
+        </Row>
+      </Section>
+      <Section title="About">
+        <InfoBox icon={<Cpu size={13} color="var(--text-muted)" strokeWidth={2} />}>
+          AI features use <strong style={{ color: "var(--text-dim)" }}>Ollama</strong> to run language models locally on your machine — no data leaves your device. Select any text in a PDF to ask questions about it.
+        </InfoBox>
+        <InfoBox icon={<Info size={13} color="var(--text-muted)" strokeWidth={2} />}>
+          If Ollama is not installed, visit <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", background: "var(--bg-active)", padding: "1px 5px", borderRadius: 3 }}>ollama.com</code> to download it, then run <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", background: "var(--bg-active)", padding: "1px 5px", borderRadius: 3 }}>ollama pull llama3.2</code> to get a model.
+        </InfoBox>
       </Section>
     </>
   );

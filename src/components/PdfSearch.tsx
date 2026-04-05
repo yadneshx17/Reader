@@ -64,7 +64,11 @@ export default function PdfSearch({ filePath, totalPages, onJumpToPage, onQueryC
 
   useEffect(() => {
     pdfjsLib.getDocument(filePath).promise.then(doc => { pdfRef.current = doc; }).catch(() => {});
-    return () => { pdfRef.current?.destroy(); pdfRef.current = null; };
+    return () => {
+      pdfRef.current?.destroy(); pdfRef.current = null;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      cancelRef.current = true;
+    };
   }, [filePath]);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -111,15 +115,18 @@ export default function PdfSearch({ filePath, totalPages, onJumpToPage, onQueryC
 
     const pageTexts = textCache.get(filePath) ?? [];
 
+    const searchQ = cs ? q : q.toLowerCase();
+    // Compile regex once before the loop (not per page)
+    const re = ww ? new RegExp(`\\b${searchQ.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, cs ? "g" : "gi") : null;
+
     for (let p = 1; p <= totalPages; p++) {
       if (cancelRef.current) break;
       const text = pageTexts[p - 1] ?? "";
       if (!text) continue;
       const searchText = cs ? text : text.toLowerCase();
-      const searchQ = cs ? q : q.toLowerCase();
-      const re = ww ? new RegExp(`\\b${searchQ.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, cs ? "g" : "gi") : null;
 
       if (re) {
+        re.lastIndex = 0; // reset stateful regex between pages
         let m: RegExpExecArray | null;
         while ((m = re.exec(text)) !== null) {
           const pos = m.index;

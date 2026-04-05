@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 // ── PDFium binding ────────────────────────────────────────────────────────────
 
@@ -385,12 +387,17 @@ pub struct AppSettings {
     pub default_layout: String,
     #[serde(rename = "showThumbnails", default = "default_true")]
     pub show_thumbnails: bool,
+    #[serde(rename = "ollamaAutoStart", default)]
+    pub ollama_auto_start: bool,
+    #[serde(rename = "translateLanguage", default = "default_translate_language")]
+    pub translate_language: String,
 }
 
 fn default_zoom() -> f32 { 1.5 }
 fn default_theme() -> String { "classic".into() }
 fn default_layout() -> String { "single".into() }
 fn default_true() -> bool { true }
+fn default_translate_language() -> String { "English".into() }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -399,6 +406,8 @@ impl Default for AppSettings {
             default_theme: default_theme(),
             default_layout: default_layout(),
             show_thumbnails: default_true(),
+            ollama_auto_start: false,
+            translate_language: default_translate_language(),
         }
     }
 }
@@ -509,6 +518,32 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ── Ollama ────────────────────────────────────────────────────────────────────
+
+/// Spawns `ollama serve` as a detached background process.
+/// Returns Ok(true) if the process was launched, Ok(false) if ollama is not found.
+#[tauri::command]
+async fn start_ollama() -> Result<bool, String> {
+    use std::process::Command;
+
+    #[cfg(target_os = "windows")]
+    let result = Command::new("ollama")
+        .arg("serve")
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .spawn();
+
+    #[cfg(not(target_os = "windows"))]
+    let result = Command::new("ollama")
+        .arg("serve")
+        .spawn();
+
+    match result {
+        Ok(_child) => Ok(true),  // detached — we don't wait on it
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -531,6 +566,7 @@ pub fn run() {
             save_settings,
             check_for_update,
             install_update,
+            start_ollama,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

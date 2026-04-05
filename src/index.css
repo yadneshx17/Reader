@@ -1,6 +1,12 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
+/* Custom text selection color for PDF text layers */
+.textLayer ::selection {
+  background: rgba(139, 92, 246, 0.45);
+  color: inherit;
+}
+
 :root {
   --bg-app:      #111111;
   --bg-sidebar:  #161616;

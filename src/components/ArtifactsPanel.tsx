@@ -225,13 +225,14 @@ export default function ArtifactsPanel({ urls, onClose }: { urls: string[]; onCl
 
   const artifacts = useMemo(() => urls.map(parseArtifact), [urls]);
 
-  const grouped = (Object.keys(CATEGORY_META) as Category[]).reduce((acc, cat) => {
+  const grouped = useMemo(() => (Object.keys(CATEGORY_META) as Category[]).reduce((acc, cat) => {
     acc[cat] = artifacts.filter(a => a.category === cat);
     return acc;
-  }, {} as Record<Category, Artifact[]>);
+  }, {} as Record<Category, Artifact[]>), [artifacts]);
 
-  const catCounts = (Object.keys(CATEGORY_META) as Category[])
-    .filter(c => grouped[c].length > 0);
+  const catCounts = useMemo(() =>
+    (Object.keys(CATEGORY_META) as Category[]).filter(c => grouped[c].length > 0),
+  [grouped]);
 
   const displayed = activeCategory === "all"
     ? artifacts

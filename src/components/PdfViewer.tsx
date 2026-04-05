@@ -1,8 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, memo, Component } from "react";
+import type { ReactNode } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { PdfTheme, PageLayout, Annotation, OutlineItem } from "../types";
 import { AnnotationTool } from "./Toolbar";
+import SelectionAIPopup from "./SelectionAIPopup";
+
+class ErrorBoundary extends Component<{ children: ReactNode; onError?: () => void }, { err: boolean }> {
+  state = { err: false };
+  static getDerivedStateFromError() { return { err: true }; }
+  componentDidCatch() { this.props.onError?.(); }
+  render() { return this.state.err ? null : this.props.children; }
+}
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
@@ -75,11 +84,12 @@ interface PdfViewerProps {
   onZoomChange: (zoom: number) => void;
   onOutlineLoad: (outline: OutlineItem[]) => void;
   onPageChange?: (page: number) => void;
+  translateLanguage?: string;
 }
 
 export default function PdfViewer({
   filePath, currentPage, zoom, theme, activeTool, pageLayout, rotation,
-  annotations, searchQuery, onTotalPages, onAddAnnotation, onDeleteAnnotation, onZoomChange, onOutlineLoad, onPageChange,
+  annotations, searchQuery, onTotalPages, onAddAnnotation, onDeleteAnnotation, onZoomChange, onOutlineLoad, onPageChange, translateLanguage,
 }: PdfViewerProps) {
   // Continuous scroll mode rendered separately
   if (pageLayout === "continuous") {
@@ -90,6 +100,7 @@ export default function PdfViewer({
         onTotalPages={onTotalPages} onAddAnnotation={onAddAnnotation}
         onDeleteAnnotation={onDeleteAnnotation} onZoomChange={onZoomChange}
         onOutlineLoad={onOutlineLoad} onPageChange={onPageChange}
+        translateLanguage={translateLanguage}
       />
     );
   }
@@ -111,9 +122,11 @@ export default function PdfViewer({
   const [loaded, setLoaded]       = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const drawRectRef   = useRef<DrawRect | null>(null);
+  const rafRef        = useRef<number | null>(null);
   const [notePrompt, setNotePrompt] = useState<{ x: number; y: number; pageX: number; pageY: number } | null>(null);
   const [noteText, setNoteText]   = useState("");
   const [hoveredNote, setHoveredNote] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [aiPopup, setAiPopup] = useState<{ text: string; rect: DOMRect } | null>(null);
 
   // Keep refs in sync; don't overwrite pendingZoom mid-gesture (that's the scroll-accumulated value)
   useEffect(() => {
@@ -156,14 +169,6 @@ export default function PdfViewer({
     clearTextLayerHighlights(textDiv);
     if (searchQuery && searchQuery.trim().length >= 2) highlightTextLayer(textDiv, searchQuery);
   }, [searchQuery]);
-
-  // Apply theme filter instantly whenever it changes — no re-render
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (canvas) { canvas.style.transition = FILTER_TRANSITION; canvas.style.filter = THEME_FILTER[theme]; }
-    const canvas2 = canvas2Ref.current;
-    if (canvas2) { canvas2.style.transition = FILTER_TRANSITION; canvas2.style.filter = THEME_FILTER[theme]; }
-  }, [theme]);
 
   // Ctrl+scroll: CSS scale gives instant visual feedback; debounce commits real zoom after gesture ends
   useEffect(() => {
@@ -229,11 +234,14 @@ export default function PdfViewer({
     return () => { cancelled = true; };
   }, [filePath]);
 
+  const annotationsRef = useRef(annotations);
+  useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
+
   const drawAnnotations = useCallback((overlay: HTMLCanvasElement, page: number) => {
     const ctx = overlay.getContext("2d")!;
     const z = zoomRef.current;
     ctx.clearRect(0, 0, overlay.width, overlay.height);
-    annotations.filter(a => a.page === page).forEach(a => {
+    annotationsRef.current.filter(a => a.page === page).forEach(a => {
       // Stored coords are in zoom=1 page-space; scale to current canvas pixels
       const ax = a.x * z, ay = a.y * z, aw = a.width * z, ah = a.height * z;
       if (a.type === "highlight") {
@@ -270,7 +278,7 @@ export default function PdfViewer({
         ctx.beginPath(); ctx.roundRect(x, y, s, s, 4); ctx.stroke();
       }
     });
-  }, [annotations]);
+  }, []); // reads annotationsRef — never stale, no deps needed
 
   // Render page(s) — theme and rotation handled here, theme also via filter effect
   useEffect(() => {
@@ -357,7 +365,7 @@ export default function PdfViewer({
       }
     })();
     return () => { cancelled = true; };
-  }, [loaded, currentPage, zoom, rotation, pageLayout, drawAnnotations]); // theme intentionally excluded
+  }, [loaded, currentPage, zoom, rotation, pageLayout]); // drawAnnotations stable (reads ref); theme intentionally excluded
 
   function getCanvasPos(e: React.MouseEvent) {
     const canvas = canvasRef.current!;
@@ -387,27 +395,31 @@ export default function PdfViewer({
   }
 
   function onMouseMove(e: React.MouseEvent) {
-    // While drawing: update live preview
+    // While drawing: update live preview, throttled to one rAF per frame
     if (isDrawing && drawRectRef.current) {
       const pos = getCanvasPos(e);
       drawRectRef.current.endX = pos.x;
       drawRectRef.current.endY = pos.y;
-      const overlay = overlayRef.current!;
-      const ctx = overlay.getContext("2d")!;
-      drawAnnotations(overlay, currentPage);
-      const r = drawRectRef.current;
-      const x = Math.min(r.startX, r.endX), y = Math.min(r.startY, r.endY);
-      const w = Math.abs(r.endX - r.startX), h = Math.abs(r.endY - r.startY);
-      if (activeTool === "highlight") {
-        ctx.fillStyle = "#f5c842"; ctx.globalAlpha = 0.4;
-        ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
-      } else if (activeTool === "underline") {
-        ctx.globalAlpha = 0.12;
-        ctx.fillStyle = "#60a5fa";
-        ctx.fillRect(x, y, w, h);
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null;
+          const overlay = overlayRef.current;
+          if (!overlay || !drawRectRef.current) return;
+          const ctx = overlay.getContext("2d")!;
+          drawAnnotations(overlay, currentPage);
+          const r = drawRectRef.current;
+          const x = Math.min(r.startX, r.endX), y = Math.min(r.startY, r.endY);
+          const w = Math.abs(r.endX - r.startX), h = Math.abs(r.endY - r.startY);
+          if (activeTool === "highlight") {
+            ctx.fillStyle = "#f5c842"; ctx.globalAlpha = 0.4;
+            ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
+          } else if (activeTool === "underline") {
+            ctx.globalAlpha = 0.12; ctx.fillStyle = "#60a5fa";
+            ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
+            ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2; ctx.lineCap = "round";
+            ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
+          }
+        });
       }
       return;
     }
@@ -522,6 +534,17 @@ export default function PdfViewer({
             }}
             onMouseMove={onMouseMove}
             onMouseLeave={() => setHoveredNote(null)}
+            onMouseUp={() => {
+              if (activeTool !== "select") return;
+              setTimeout(() => {
+                const sel = window.getSelection();
+                const text = sel?.toString().trim() ?? "";
+                if (!text || !sel?.rangeCount) return;
+                const rect = sel.getRangeAt(0).getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) return;
+                setAiPopup({ text, rect });
+              }, 10);
+            }}
           />
           <canvas
             ref={overlayRef}
@@ -602,6 +625,17 @@ export default function PdfViewer({
         )}
       </div>{/* end flex row */}
       </div>{/* end centering wrapper */}
+
+      {aiPopup && (
+        <ErrorBoundary onError={() => setAiPopup(null)}>
+        <SelectionAIPopup
+          selectedText={aiPopup.text}
+          anchorRect={aiPopup.rect}
+          onClose={() => setAiPopup(null)}
+          translateLanguage={translateLanguage}
+        />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }
@@ -614,11 +648,12 @@ interface ContinuousProps {
   onTotalPages: (n: number) => void; onAddAnnotation: (a: Annotation) => void;
   onDeleteAnnotation: (id: string) => void; onZoomChange: (zoom: number) => void;
   onOutlineLoad: (outline: OutlineItem[]) => void; onPageChange?: (page: number) => void;
+  translateLanguage?: string;
 }
 
 function ContinuousViewer({
   filePath, currentPage, zoom, theme, activeTool, rotation, annotations,
-  onTotalPages, onAddAnnotation, onDeleteAnnotation, onZoomChange, onOutlineLoad, onPageChange,
+  onTotalPages, onAddAnnotation, onDeleteAnnotation, onZoomChange, onOutlineLoad, onPageChange, translateLanguage,
 }: ContinuousProps) {
   const containerRef   = useRef<HTMLDivElement>(null);
   const contentRef     = useRef<HTMLDivElement>(null);
@@ -630,6 +665,7 @@ function ContinuousViewer({
   const isGesturingRef = useRef(false);
   const [totalPages, setTotalPages] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [aiPopup, setAiPopup] = useState<{ text: string; rect: DOMRect } | null>(null);
   // Track which page canvases are rendered
   const pageRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
   // Suppresses IntersectionObserver callbacks while a programmatic scroll is in flight
@@ -743,6 +779,14 @@ function ContinuousViewer({
     return () => io.disconnect();
   }, [loaded, totalPages, onPageChange]);
 
+  // Stable callbacks so ContinuousPage memo is effective
+  const handleMount = useCallback((pageNum: number, canvas: HTMLCanvasElement) => {
+    pageRefs.current.set(pageNum, canvas);
+  }, []);
+  const handleSelectionMouseUp = useCallback((text: string, rect: DOMRect) => {
+    setAiPopup({ text, rect });
+  }, []);
+
   if (!loaded) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
@@ -766,31 +810,48 @@ function ContinuousViewer({
             annotations={annotations}
             onAddAnnotation={onAddAnnotation}
             onDeleteAnnotation={onDeleteAnnotation}
-            onMount={canvas => pageRefs.current.set(pageNum, canvas)}
+            onMount={canvas => handleMount(pageNum, canvas)}
+            onSelectionMouseUp={handleSelectionMouseUp}
           />
         ))}
       </div>
+
+      {aiPopup && (
+        <ErrorBoundary onError={() => setAiPopup(null)}>
+        <SelectionAIPopup
+          selectedText={aiPopup.text}
+          anchorRect={aiPopup.rect}
+          onClose={() => setAiPopup(null)}
+          translateLanguage={translateLanguage}
+        />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }
 
-function ContinuousPage({
+const ContinuousPage = memo(function ContinuousPage({
   pageNum, pdf, zoom, theme, rotation, activeTool, annotations,
-  onAddAnnotation, onDeleteAnnotation, onMount,
+  onAddAnnotation, onDeleteAnnotation, onMount, onSelectionMouseUp,
 }: {
   pageNum: number; pdf: pdfjsLib.PDFDocumentProxy; zoom: number; theme: PdfTheme;
   rotation: number; activeTool: AnnotationTool; annotations: Annotation[];
   onAddAnnotation: (a: Annotation) => void; onDeleteAnnotation: (id: string) => void;
   onMount: (canvas: HTMLCanvasElement) => void;
+  onSelectionMouseUp?: (text: string, rect: DOMRect) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
   const zoomRef = useRef(zoom);
   const isDrawing = useRef(false);
   const drawRectRef = useRef<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const annotationsRef = useRef(annotations);
 
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
 
   // Register canvas with parent for scrolling/observation
   useEffect(() => { if (canvasRef.current) onMount(canvasRef.current); }, []);
@@ -800,7 +861,7 @@ function ContinuousPage({
     const ctx = overlay.getContext("2d")!;
     const z = zoomRef.current;
     ctx.clearRect(0, 0, overlay.width, overlay.height);
-    annotations.filter(a => a.page === pageNum).forEach(a => {
+    annotationsRef.current.filter(a => a.page === pageNum).forEach(a => {
       const ax = a.x * z, ay = a.y * z, aw = a.width * z, ah = a.height * z;
       if (a.type === "highlight") {
         ctx.fillStyle = a.color; ctx.globalAlpha = 0.35;
@@ -817,7 +878,7 @@ function ContinuousPage({
         ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
       }
     });
-  }, [annotations, pageNum]);
+  }, [pageNum]); // reads annotationsRef — stable, no annotation dep needed
 
   // Render page
   useEffect(() => {
@@ -841,12 +902,24 @@ function ContinuousPage({
         await task.promise;
         if (cancelled) return;
         drawAnnotations(overlay);
+
+        // Render text layer for selection
+        const textLayer = textLayerRef.current;
+        if (textLayer) {
+          textLayer.innerHTML = "";
+          const dpr = window.devicePixelRatio || 1;
+          textLayer.style.setProperty("--total-scale-factor", String(zoom * dpr));
+          textLayer.style.width  = vp.width + "px";
+          textLayer.style.height = vp.height + "px";
+          const tl = new pdfjsLib.TextLayer({ textContentSource: page.streamTextContent(), container: textLayer, viewport: vp });
+          if (!cancelled) await tl.render();
+        }
       } catch (e: unknown) {
         if ((e as { name?: string }).name !== "RenderingCancelledException") console.error("Render:", e);
       }
     })();
     return () => { cancelled = true; };
-  }, [pdf, pageNum, zoom, rotation, theme, drawAnnotations]);
+  }, [pdf, pageNum, zoom, rotation, theme]); // drawAnnotations stable (reads ref)
 
   function getPos(e: React.MouseEvent) {
     const c = canvasRef.current!;
@@ -865,16 +938,22 @@ function ContinuousPage({
     if (!isDrawing.current || !drawRectRef.current || !overlayRef.current) return;
     const pos = getPos(e);
     drawRectRef.current.endX = pos.x; drawRectRef.current.endY = pos.y;
-    const overlay = overlayRef.current;
-    const ctx = overlay.getContext("2d")!;
-    drawAnnotations(overlay);
-    const r = drawRectRef.current;
-    const x = Math.min(r.startX, r.endX), y = Math.min(r.startY, r.endY);
-    const w = Math.abs(r.endX - r.startX), h = Math.abs(r.endY - r.startY);
-    if (activeTool === "highlight") { ctx.fillStyle = "#f5c842"; ctx.globalAlpha = 0.4; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
-    else if (activeTool === "underline") {
-      ctx.globalAlpha = 0.12; ctx.fillStyle = "#60a5fa"; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        const overlay = overlayRef.current;
+        if (!overlay || !drawRectRef.current) return;
+        const ctx = overlay.getContext("2d")!;
+        drawAnnotations(overlay);
+        const r = drawRectRef.current;
+        const x = Math.min(r.startX, r.endX), y = Math.min(r.startY, r.endY);
+        const w = Math.abs(r.endX - r.startX), h = Math.abs(r.endY - r.startY);
+        if (activeTool === "highlight") { ctx.fillStyle = "#f5c842"; ctx.globalAlpha = 0.4; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
+        else if (activeTool === "underline") {
+          ctx.globalAlpha = 0.12; ctx.fillStyle = "#60a5fa"; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
+          ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
+        }
+      });
     }
   }
 
@@ -904,9 +983,30 @@ function ContinuousPage({
       <canvas ref={overlayRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", cursor: activeTool === "select" ? "default" : "crosshair", pointerEvents: activeTool === "select" ? "none" : "auto" }}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onContextMenu={onContextMenu}
       />
+      <div
+        ref={textLayerRef}
+        className="textLayer"
+        style={{
+          position: "absolute", top: 0, left: 0,
+          pointerEvents: activeTool === "select" ? "auto" : "none",
+          userSelect: activeTool === "select" ? "text" : "none",
+          overflow: "hidden",
+        }}
+        onMouseUp={() => {
+          if (activeTool !== "select" || !onSelectionMouseUp) return;
+          setTimeout(() => {
+            const sel = window.getSelection();
+            const text = sel?.toString().trim() ?? "";
+            if (!text || !sel?.rangeCount) return;
+            const rect = sel.getRangeAt(0).getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) return;
+            onSelectionMouseUp(text, rect);
+          }, 10);
+        }}
+      />
     </div>
   );
-}
+}); // end memo(ContinuousPage)
 
 // ── Note popup ────────────────────────────────────────────────────────────────
 
