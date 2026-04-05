@@ -177,7 +177,7 @@ function OllamaIndicator() {
     let cancelled = false;
     async function check() {
       try {
-        const r = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+        const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
         if (!cancelled) setRunning(r.ok);
       } catch {
         if (!cancelled) setRunning(false);

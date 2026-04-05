@@ -47,7 +47,7 @@ export default function App() {
   useEffect(() => {
     if (!settings.ollamaAutoStart) return;
     const controller = new AbortController();
-    fetch("http://localhost:11434/api/tags", { signal: controller.signal })
+    fetch("http://127.0.0.1:11434/api/tags", { signal: controller.signal })
       .catch(() => { if (!controller.signal.aborted) invoke("start_ollama").catch(() => {}); });
     return () => controller.abort();
   }, [settings.ollamaAutoStart]);

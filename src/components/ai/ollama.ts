@@ -2,7 +2,7 @@
  * Ollama API helpers — status check, streaming chat.
  */
 
-export const OLLAMA_BASE = "http://localhost:11434";
+export const OLLAMA_BASE = "http://127.0.0.1:11434";
 
 export type OllamaStatus = "loading" | "not_installed" | "not_running" | "starting" | "ready";
 
