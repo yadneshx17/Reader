@@ -74,6 +74,7 @@ interface PdfViewerProps {
   zoom: number;
   theme: PdfTheme;
   activeTool: AnnotationTool;
+  highlightColor: string;
   pageLayout: PageLayout;
   rotation: number;
   annotations: Annotation[];
@@ -88,7 +89,7 @@ interface PdfViewerProps {
 }
 
 export default function PdfViewer({
-  filePath, currentPage, zoom, theme, activeTool, pageLayout, rotation,
+  filePath, currentPage, zoom, theme, activeTool, highlightColor, pageLayout, rotation,
   annotations, searchQuery, onTotalPages, onAddAnnotation, onDeleteAnnotation, onZoomChange, onOutlineLoad, onPageChange, translateLanguage,
 }: PdfViewerProps) {
   // Continuous scroll mode rendered separately
@@ -96,7 +97,7 @@ export default function PdfViewer({
     return (
       <ContinuousViewer
         filePath={filePath} currentPage={currentPage} zoom={zoom} theme={theme}
-        activeTool={activeTool} rotation={rotation} annotations={annotations}
+        activeTool={activeTool} highlightColor={highlightColor} rotation={rotation} annotations={annotations}
         onTotalPages={onTotalPages} onAddAnnotation={onAddAnnotation}
         onDeleteAnnotation={onDeleteAnnotation} onZoomChange={onZoomChange}
         onOutlineLoad={onOutlineLoad} onPageChange={onPageChange}
@@ -411,7 +412,7 @@ export default function PdfViewer({
           const x = Math.min(r.startX, r.endX), y = Math.min(r.startY, r.endY);
           const w = Math.abs(r.endX - r.startX), h = Math.abs(r.endY - r.startY);
           if (activeTool === "highlight") {
-            ctx.fillStyle = "#f5c842"; ctx.globalAlpha = 0.4;
+            ctx.fillStyle = highlightColor; ctx.globalAlpha = 0.4;
             ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
           } else if (activeTool === "underline") {
             ctx.globalAlpha = 0.12; ctx.fillStyle = "#60a5fa";
@@ -456,7 +457,7 @@ export default function PdfViewer({
       type: activeTool as "highlight" | "underline",
       page: currentPage,
       x: x / z, y: y / z, width: w / z, height: Math.max(h, 12) / z,
-      color: activeTool === "highlight" ? "#f5c842" : "#60a5fa",
+      color: activeTool === "highlight" ? highlightColor : "#60a5fa",
     });
   }
 
@@ -644,7 +645,7 @@ export default function PdfViewer({
 
 interface ContinuousProps {
   filePath: string; currentPage: number; zoom: number; theme: PdfTheme;
-  activeTool: AnnotationTool; rotation: number; annotations: Annotation[];
+  activeTool: AnnotationTool; highlightColor: string; rotation: number; annotations: Annotation[];
   onTotalPages: (n: number) => void; onAddAnnotation: (a: Annotation) => void;
   onDeleteAnnotation: (id: string) => void; onZoomChange: (zoom: number) => void;
   onOutlineLoad: (outline: OutlineItem[]) => void; onPageChange?: (page: number) => void;
@@ -652,7 +653,7 @@ interface ContinuousProps {
 }
 
 function ContinuousViewer({
-  filePath, currentPage, zoom, theme, activeTool, rotation, annotations,
+  filePath, currentPage, zoom, theme, activeTool, highlightColor, rotation, annotations,
   onTotalPages, onAddAnnotation, onDeleteAnnotation, onZoomChange, onOutlineLoad, onPageChange, translateLanguage,
 }: ContinuousProps) {
   const containerRef   = useRef<HTMLDivElement>(null);
@@ -799,20 +800,21 @@ function ContinuousViewer({
     <div ref={containerRef} style={{ width: "100%", height: "100%", overflowY: "auto", overflowX: "auto", background: "var(--bg-app)" }}>
       <div ref={contentRef} style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "40px 24px 96px", gap: 16, transformOrigin: "top center", minWidth: "100%" }}>
         {Array.from({ length: totalPages }, (_, i) => i + 1).map(pageNum => (
-          <ContinuousPage
-            key={`${filePath}-${pageNum}`}
-            pageNum={pageNum}
-            pdf={pdfRef.current!}
-            zoom={zoom}
-            theme={theme}
-            rotation={rotation}
-            activeTool={activeTool}
-            annotations={annotations}
-            onAddAnnotation={onAddAnnotation}
-            onDeleteAnnotation={onDeleteAnnotation}
-            onMount={canvas => handleMount(pageNum, canvas)}
-            onSelectionMouseUp={handleSelectionMouseUp}
-          />
+            <ContinuousPage
+              key={`${filePath}-${pageNum}`}
+              pageNum={pageNum}
+              pdf={pdfRef.current!}
+              zoom={zoom}
+              theme={theme}
+              rotation={rotation}
+              activeTool={activeTool}
+              highlightColor={highlightColor}
+              annotations={annotations}
+              onAddAnnotation={onAddAnnotation}
+              onDeleteAnnotation={onDeleteAnnotation}
+              onMount={canvas => handleMount(pageNum, canvas)}
+              onSelectionMouseUp={handleSelectionMouseUp}
+            />
         ))}
       </div>
 
@@ -831,11 +833,11 @@ function ContinuousViewer({
 }
 
 const ContinuousPage = memo(function ContinuousPage({
-  pageNum, pdf, zoom, theme, rotation, activeTool, annotations,
+  pageNum, pdf, zoom, theme, rotation, activeTool, highlightColor, annotations,
   onAddAnnotation, onDeleteAnnotation, onMount, onSelectionMouseUp,
 }: {
   pageNum: number; pdf: pdfjsLib.PDFDocumentProxy; zoom: number; theme: PdfTheme;
-  rotation: number; activeTool: AnnotationTool; annotations: Annotation[];
+  rotation: number; activeTool: AnnotationTool; highlightColor: string; annotations: Annotation[];
   onAddAnnotation: (a: Annotation) => void; onDeleteAnnotation: (id: string) => void;
   onMount: (canvas: HTMLCanvasElement) => void;
   onSelectionMouseUp?: (text: string, rect: DOMRect) => void;
@@ -948,7 +950,7 @@ const ContinuousPage = memo(function ContinuousPage({
         const r = drawRectRef.current;
         const x = Math.min(r.startX, r.endX), y = Math.min(r.startY, r.endY);
         const w = Math.abs(r.endX - r.startX), h = Math.abs(r.endY - r.startY);
-        if (activeTool === "highlight") { ctx.fillStyle = "#f5c842"; ctx.globalAlpha = 0.4; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
+        if (activeTool === "highlight") { ctx.fillStyle = highlightColor; ctx.globalAlpha = 0.4; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
         else if (activeTool === "underline") {
           ctx.globalAlpha = 0.12; ctx.fillStyle = "#60a5fa"; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
           ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
@@ -967,7 +969,7 @@ const ContinuousPage = memo(function ContinuousPage({
     drawRectRef.current = null;
     if (w < 5 && h < 5) return;
     const z = zoomRef.current;
-    onAddAnnotation({ id: crypto.randomUUID(), type: activeTool as "highlight" | "underline", page: pageNum, x: x / z, y: y / z, width: w / z, height: Math.max(h, 12) / z, color: activeTool === "highlight" ? "#f5c842" : "#60a5fa" });
+    onAddAnnotation({ id: crypto.randomUUID(), type: activeTool as "highlight" | "underline", page: pageNum, x: x / z, y: y / z, width: w / z, height: Math.max(h, 12) / z, color: activeTool === "highlight" ? highlightColor : "#60a5fa" });
   }
 
   function onContextMenu(e: React.MouseEvent) {

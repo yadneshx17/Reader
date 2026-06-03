@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { BookOpen, Minus, Square, X, House, Plus, Settings } from "lucide-react";
+import { BookOpen, Minus, Square, X, Plus } from "lucide-react";
 import ollamaLogo from "../assets/ollama.png";
 import { useState, useEffect } from "react";
 import type { PdfFile } from "../types";
@@ -18,15 +18,15 @@ interface TitleBarProps {
   activeFileId: string | null;
   onSelectFile: (id: string) => void;
   onCloseFile: (id: string) => void;
-  onGoHome: () => void;
-  onGoSettings: () => void;
   onOpenFile: () => void;
-  isHome: boolean;
-  isSettings: boolean;
+  ollamaError?: string;
+  onDismissOllamaError?: () => void;
 }
 
+
+
 export default function TitleBar({
-  files, activeFileId, onSelectFile, onCloseFile, onGoHome, onGoSettings, onOpenFile, isHome, isSettings,
+  files, activeFileId, onSelectFile, onCloseFile, onOpenFile, ollamaError, onDismissOllamaError,
 }: TitleBarProps) {
   const win = getCurrentWindow();
   const minimize = () => win.minimize();
@@ -73,22 +73,6 @@ export default function TitleBar({
         padding: "0 4px",
       } as DragStyle}>
 
-        {/* Home tab */}
-        <Tab
-          label="Library"
-          icon={<House size={11} strokeWidth={1.8} />}
-          isActive={isHome}
-          onClick={onGoHome}
-        />
-
-        {/* Settings tab */}
-        <Tab
-          label="Settings"
-          icon={<Settings size={11} strokeWidth={1.8} />}
-          isActive={isSettings}
-          onClick={onGoSettings}
-        />
-
         {/* File tabs */}
         {files.map(file => (
           <Tab
@@ -106,7 +90,7 @@ export default function TitleBar({
                 </span>
               </div>
             }
-            isActive={!isHome && file.id === activeFileId}
+            isActive={file.id === activeFileId}
             onClick={() => onSelectFile(file.id)}
             onClose={() => onCloseFile(file.id)}
           />
@@ -132,7 +116,7 @@ export default function TitleBar({
       </div>
 
       {/* Ollama indicator */}
-      <OllamaIndicator />
+      <OllamaIndicator error={ollamaError} onDismiss={onDismissOllamaError} />
 
       {/* Window controls */}
       <div style={{ display: "flex", flexShrink: 0, WebkitAppRegion: "no-drag" } as DragStyle}>
@@ -170,23 +154,46 @@ export default function TitleBar({
   );
 }
 
-function OllamaIndicator() {
+function OllamaIndicator({ error, onDismiss }: { error?: string; onDismiss?: () => void }) {
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function check() {
       try {
-        const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: controller.signal });
+        clearTimeout(timeout);
         if (!cancelled) setRunning(r.ok);
       } catch {
         if (!cancelled) setRunning(false);
       }
     }
     check();
-    const id = setInterval(check, 10000);
+    const id = setInterval(check, 15000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
+
+  if (error) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "0 10px", flexShrink: 0, height: 40,
+        WebkitAppRegion: "no-drag",
+        background: "rgba(239,68,68,0.08)", borderLeft: "1px solid rgba(239,68,68,0.25)",
+      } as DragStyle}>
+        <span style={{ fontSize: 10, color: "#f87171", lineHeight: 1.4, maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {error}
+        </span>
+        {onDismiss && (
+          <button onClick={onDismiss} style={{ width: 18, height: 18, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: "#f87171", cursor: "pointer", flexShrink: 0 }}>
+            <X size={9} strokeWidth={2.5} />
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (!running) return null;
 

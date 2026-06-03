@@ -51,6 +51,7 @@ export interface PdfFile {
   annotations: Annotation[];
   outline: OutlineItem[];
   artifactUrls: string[];
+  tags: string[];
 }
 
 export interface AppState {
@@ -74,4 +75,6 @@ export interface LibraryStore {
   annotations: Record<string, Annotation[]>;
   /** disk path → last page number viewed */
   lastPage?: Record<string, number>;
+  /** disk path → tags */
+  tags: Record<string, string[]>;
 }

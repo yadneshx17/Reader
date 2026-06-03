@@ -348,6 +348,8 @@ pub struct LibraryStore {
     pub artifact_urls: std::collections::HashMap<String, Vec<String>>,
     #[serde(default)]
     pub annotations: std::collections::HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub tags: std::collections::HashMap<String, Vec<String>>,
 }
 
 fn library_path(app: &tauri::AppHandle) -> PathBuf {
@@ -431,6 +433,90 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) {
     if let Ok(json) = serde_json::to_vec_pretty(&settings) {
         let _ = fs::write(path, json);
     }
+}
+
+// ── URL import ─────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct ImportedPdf {
+    pub path: String,
+    pub data: String,
+    pub title: Option<String>,
+    pub urls: Vec<String>,
+    pub outline: Vec<OutlineItem>,
+}
+
+fn url_filename(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .and_then(|seg| {
+            let seg = seg.split('?').next().unwrap_or("");
+            if seg.ends_with(".pdf") || seg.contains(".pdf") {
+                Some(seg.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| format!("imported_{}.pdf", std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_secs()))
+}
+
+fn unique_path(dir: &PathBuf, filename: &str) -> PathBuf {
+    let base = dir.join(filename);
+    let stem = filename.strip_suffix(".pdf").unwrap_or(filename);
+    let mut candidate = base.clone();
+    let mut n = 1;
+    while candidate.exists() {
+        candidate = dir.join(format!("{} ({}).pdf", stem, n));
+        n += 1;
+    }
+    candidate
+}
+
+#[tauri::command]
+async fn import_from_url(app: tauri::AppHandle, url: String) -> Result<ImportedPdf, String> {
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to download: {}", e))?;
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    let filename = url_filename(&url);
+    let pdfs_dir = app.path().app_data_dir().expect("no app data dir").join("pdfs");
+    let _ = fs::create_dir_all(&pdfs_dir);
+    let save_path = unique_path(&pdfs_dir, &filename);
+    fs::write(&save_path, &bytes).map_err(|e| format!("Failed to save: {}", e))?;
+
+    let path_str = save_path.to_string_lossy().to_string();
+    let path_for_blocking = path_str.clone();
+
+    let (data, title, urls, outline) = tokio::task::spawn_blocking(move || {
+        use base64::Engine;
+        let bytes = fs::read(&path_for_blocking).map_err(|e| e.to_string())?;
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let title = extract_pdf_title(&path_for_blocking);
+        let urls = extract_pdf_urls(&path_for_blocking);
+        let outline = extract_pdf_outline(&path_for_blocking);
+        Ok::<_, String>((data, title, urls, outline))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    {
+        let mut lib = load_library(&app);
+        if !urls.is_empty() || !lib.artifact_urls.contains_key(&path_str) {
+            lib.artifact_urls.insert(path_str.clone(), urls.clone());
+            let lib_path = library_path(&app);
+            let _ = fs::create_dir_all(lib_path.parent().unwrap());
+            if let Ok(json) = serde_json::to_vec_pretty(&lib) {
+                let _ = fs::write(lib_path, json);
+            }
+        }
+    }
+
+    Ok(ImportedPdf { path: path_str, data, title, urls, outline })
 }
 
 // ── arXiv title fetch ─────────────────────────────────────────────────────────
@@ -521,27 +607,51 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 // ── Ollama ────────────────────────────────────────────────────────────────────
 
 /// Spawns `ollama serve` as a detached background process.
-/// Returns Ok(true) if the process was launched, Ok(false) if ollama is not found.
+/// Returns `Ok(true)` if launched, `Ok(false)` if not found on any known path.
 #[tauri::command]
 async fn start_ollama() -> Result<bool, String> {
     use std::process::Command;
 
-    #[cfg(target_os = "windows")]
-    let result = Command::new("ollama")
-        .arg("serve")
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn();
-
-    #[cfg(not(target_os = "windows"))]
-    let result = Command::new("ollama")
-        .arg("serve")
-        .spawn();
-
-    match result {
-        Ok(_child) => Ok(true),  // detached — we don't wait on it
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e.to_string()),
+    fn try_spawn(p: &str) -> std::io::Result<std::process::Child> {
+        #[cfg(target_os = "windows")]
+        { Command::new(p).arg("serve").creation_flags(0x08000000).spawn() }
+        #[cfg(not(target_os = "windows"))]
+        { Command::new(p).arg("serve").spawn() }
     }
+
+    // Try common install paths + PATH fallback
+    #[cfg(target_os = "windows")]
+    let candidates = {
+        let mut v = Vec::new();
+        if let Ok(p) = std::env::var("LOCALAPPDATA") {
+            v.push(format!(r"{}\Programs\Ollama\ollama.exe", p));
+        }
+        if let Ok(p) = std::env::var("ProgramFiles") {
+            v.push(format!(r"{}\Ollama\ollama.exe", p));
+        }
+        if let Ok(p) = std::env::var("ProgramFiles(x86)") {
+            v.push(format!(r"{}\Ollama\ollama.exe", p));
+        }
+        v.push("ollama".into());
+        v
+    };
+    #[cfg(not(target_os = "windows"))]
+    let candidates = vec!["ollama"];
+
+    for exe in &candidates {
+        match try_spawn(exe) {
+            Ok(_child) => return Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("Failed to start ollama at {}: {}", exe, e)),
+        }
+    }
+
+    // Not found on any path — return user-friendly message
+    #[cfg(target_os = "windows")]
+    let hint = "Ollama was not found. Download it from ollama.com, install it, then restart this app. If you already installed it, try restarting the app after installation.";
+    #[cfg(not(target_os = "windows"))]
+    let hint = "Ollama was not found. Install it from ollama.com or run `curl -fsSL https://ollama.com/install.sh | sh`.";
+    Err(hint.to_string())
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -567,6 +677,7 @@ pub fn run() {
             check_for_update,
             install_update,
             start_ollama,
+            import_from_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

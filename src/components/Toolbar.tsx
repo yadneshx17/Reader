@@ -17,6 +17,7 @@ interface ToolbarProps {
   zoom: number;
   theme: PdfTheme;
   activeTool: AnnotationTool;
+  highlightColor: string;
   pageLayout: PageLayout;
   rotation: number;
   onZoomIn: () => void;
@@ -27,9 +28,18 @@ interface ToolbarProps {
   onPageInput: (page: number) => void;
   onThemeChange: (theme: PdfTheme) => void;
   onToolChange: (tool: AnnotationTool) => void;
+  onHighlightColorChange: (color: string) => void;
   onPageLayoutChange: (layout: PageLayout) => void;
   onRotate: (deg: number) => void;
 }
+
+const HIGHLIGHT_COLORS = [
+  { color: "#f5c842", label: "Yellow",        tip: "General highlight" },
+  { color: "#ef4444", label: "Red",           tip: "Disagree / problem" },
+  { color: "#4A9B7F", label: "Green",         tip: "Key finding" },
+  { color: "#60a5fa", label: "Blue",          tip: "Method / approach" },
+  { color: "#f59e0b", label: "Orange",        tip: "Question / follow-up" },
+];
 
 const THEMES: { id: PdfTheme; label: string; swatch: string; swatchBorder: string }[] = [
   { id: "classic", label: "Classic", swatch: "#f5f5f5",  swatchBorder: "rgba(0,0,0,0.15)" },
@@ -86,10 +96,10 @@ function Btn({ onClick, disabled = false, active = false, children, tip }: {
 }
 
 export default function Toolbar({
-  currentPage, totalPages, zoom, theme, activeTool, pageLayout, rotation,
+  currentPage, totalPages, zoom, theme, activeTool, highlightColor, pageLayout, rotation,
   onZoomIn, onZoomOut, onZoomReset,
   onPrevPage, onNextPage, onPageInput,
-  onThemeChange, onToolChange, onPageLayoutChange, onRotate,
+  onThemeChange, onToolChange, onHighlightColorChange, onPageLayoutChange, onRotate,
 }: ToolbarProps) {
   const [pageVal, setPageVal] = useState(String(currentPage));
   useEffect(() => { setPageVal(String(currentPage)); }, [currentPage]);
@@ -135,6 +145,39 @@ export default function Toolbar({
             {tool.icon}
           </Btn>
         ))}
+
+        {/* Highlight color swatches */}
+        {activeTool === "highlight" && (
+          <div style={{ display: "flex", gap: 2, margin: "0 2px" }}>
+            {HIGHLIGHT_COLORS.map(c => (
+              <Tooltip key={c.color} label={c.tip}>
+                <button
+                  onClick={() => onHighlightColorChange(c.color)}
+                  style={{
+                    width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: highlightColor === c.color ? "rgba(255,255,255,0.12)" : "transparent",
+                    border: highlightColor === c.color ? "1px solid rgba(255,255,255,0.18)" : "1px solid transparent",
+                    transition: T,
+                  }}
+                  onMouseEnter={e => {
+                    if (highlightColor !== c.color) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.08)";
+                  }}
+                  onMouseLeave={e => {
+                    if (highlightColor !== c.color) (e.currentTarget as HTMLElement).style.background = "transparent";
+                  }}
+                >
+                  <div style={{
+                    width: 13, height: 13, borderRadius: 3,
+                    background: c.color,
+                    boxShadow: highlightColor === c.color ? `0 0 0 2px ${c.color}66` : "none",
+                    transition: "box-shadow var(--duration-fast) var(--ease-out)",
+                  }} />
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+        )}
 
         <Sep />
 

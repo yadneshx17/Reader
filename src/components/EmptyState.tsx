@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import {
   FileText, Plus, ArrowRight, X, Clock, FolderOpen, Folder as FolderIcon,
   Check, ChevronDown, ChevronRight, MoreHorizontal, Edit2, Trash2,
-  CheckCircle, Circle, FolderPlus, ArrowUpRight,
+  CheckCircle, Circle, FolderPlus, ArrowUpRight, Download, Loader2,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Folder, LibraryStore } from "../types";
@@ -73,6 +73,8 @@ interface OpenFile {
 interface EmptyStateProps {
   onOpenFile: () => void;
   onOpenPath: (path: string, name: string) => void;
+  onImportUrl?: (url: string) => Promise<void>;
+  onUpdateTags?: (diskPath: string, tags: string[]) => void;
   openFiles?: OpenFile[];
   onResumeFile?: (id: string) => void;
   /** path → read page numbers, from library */
@@ -80,6 +82,8 @@ interface EmptyStateProps {
   /** path → total pages, from open files */
   fileTotalPages?: Record<string, number>;
   showThumbnails?: boolean;
+  /** path → tags, from library */
+  tags?: Record<string, string[]>;
 }
 
 // ── Tauri helpers ─────────────────────────────────────────────────────────────
@@ -97,7 +101,7 @@ async function removeRecentFile(path: string) {
 }
 
 async function getLibrary(): Promise<LibraryStore> {
-  return invoke<LibraryStore>("get_library").catch(() => ({ completedPaths: [], folders: [], readPages: {}, annotations: {} }));
+  return invoke<LibraryStore>("get_library").catch(() => ({ completedPaths: [], folders: [], readPages: {}, annotations: {}, tags: {} }));
 }
 
 async function saveLibrary(store: LibraryStore) {
@@ -314,6 +318,53 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+function TagPill({ label, active = false, onClick, onRemove }: {
+  label: string; active?: boolean; onClick?: () => void; onRemove?: () => void;
+}) {
+  return (
+    <span
+      onClick={onClick}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        padding: "3px 8px", borderRadius: 5,
+        background: active ? "var(--bg-active)" : "var(--bg-raised)",
+        border: `1px solid ${active ? "var(--border-default)" : "var(--border-faint)"}`,
+        color: active ? "var(--text-white)" : "var(--text-dim)",
+        fontSize: 10, fontWeight: 500, letterSpacing: "-0.01em",
+        cursor: onClick ? "pointer" : "default",
+        transition: "all var(--duration-fast) var(--ease-out)",
+      }}
+      onMouseEnter={e => {
+        if (onClick && !active) {
+          (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)";
+          (e.currentTarget as HTMLElement).style.color = "var(--text-primary)";
+        }
+      }}
+      onMouseLeave={e => {
+        if (onClick && !active) {
+          (e.currentTarget as HTMLElement).style.background = "var(--bg-raised)";
+          (e.currentTarget as HTMLElement).style.color = "var(--text-dim)";
+        }
+      }}
+    >
+      #{label}
+      {onRemove && (
+        <button
+          onClick={e => { e.stopPropagation(); onRemove(); }}
+          style={{
+            width: 12, height: 12, borderRadius: 3, flexShrink: 0,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            background: "transparent", border: "none", color: "var(--text-muted)",
+            cursor: "pointer", fontSize: 10, lineHeight: 1, padding: 0,
+          }}
+        >
+          <X size={8} strokeWidth={2.5} />
+        </button>
+      )}
+    </span>
+  );
+}
+
 // ── Folder Card ───────────────────────────────────────────────────────────────
 
 function FolderCard({
@@ -455,7 +506,7 @@ function FolderCard({
 // ── PDF Grid Card ─────────────────────────────────────────────────────────────
 
 function PdfCard({
-  file, index, isCompleted, folders, readPages, totalPages, onOpen, onToggleCompleted, onRemove, onMoveToFolder, onRemoveFromFolder,
+  file, index, isCompleted, folders, readPages, totalPages, tags: fileTags, onOpen, onToggleCompleted, onRemove, onMoveToFolder, onRemoveFromFolder, onAddTag, onRemoveTag,
   inFolder = false, showThumbnails = true,
 }: {
   file: RecentFile;
@@ -464,16 +515,21 @@ function PdfCard({
   folders: Folder[];
   readPages: number[];
   totalPages: number;
+  tags: string[];
   onOpen: () => void;
   onToggleCompleted: () => void;
   onRemove: () => void;
   onMoveToFolder: (folderId: string) => void;
   onRemoveFromFolder?: () => void;
+  onAddTag?: (tag: string) => void;
+  onRemoveTag?: (tag: string) => void;
   inFolder?: boolean;
   showThumbnails?: boolean;
 }) {
   const [hov, setHov] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [addTagOpen, setAddTagOpen] = useState(false);
+  const [tagVal, setTagVal] = useState("");
   const accent = getAccentColor(file.name);
 
   const menuItems: MenuItem[] = [
@@ -591,6 +647,55 @@ function PdfCard({
             )}
           </div>
         </div>
+
+        {/* Tags */}
+        {!isCompleted && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+            {fileTags.map(tag => (
+              <TagPill key={tag} label={tag} onRemove={onRemoveTag ? () => onRemoveTag(tag) : undefined} />
+            ))}
+            {onAddTag && (addTagOpen ? (
+              <form
+                onSubmit={e => {
+                  e.preventDefault();
+                  if (tagVal.trim()) { onAddTag(tagVal.trim()); setTagVal(""); setAddTagOpen(false); }
+                }}
+                style={{ display: "inline-flex" }}
+                onClick={e => e.stopPropagation()}
+              >
+                <input
+                  value={tagVal}
+                  onChange={e => setTagVal(e.target.value)}
+                  onBlur={() => { if (!tagVal.trim()) setAddTagOpen(false); }}
+                  onKeyDown={e => { if (e.key === "Escape") { setAddTagOpen(false); setTagVal(""); } }}
+                  placeholder="tag"
+                  autoFocus
+                  style={{
+                    width: 50, height: 20, padding: "1px 4px", borderRadius: 4,
+                    background: "var(--bg-input)", border: "1px solid var(--border-default)",
+                    color: "var(--text-white)", fontSize: 10, outline: "none",
+                    fontFamily: "inherit",
+                  }}
+                />
+              </form>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); setAddTagOpen(true); }}
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 20, height: 20, borderRadius: 4,
+                  background: "var(--bg-raised)", border: "1px solid var(--border-faint)",
+                  color: "var(--text-muted)", cursor: "pointer", fontSize: 14, lineHeight: 1,
+                  opacity: hov ? 1 : 0, transition: "all var(--duration-fast)",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-default)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-faint)"; }}
+              >
+                +
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {ctxMenu && (
@@ -603,7 +708,7 @@ function PdfCard({
 // ── Folder View (expanded) ────────────────────────────────────────────────────
 
 function FolderView({
-  folder, recents, library, onBack, onOpen, onToggleCompleted, onRemove, onRemoveFromFolder, folders, allReadPages, fileTotalPages, showThumbnails = true,
+  folder, recents, library, onBack, onOpen, onToggleCompleted, onRemove, onRemoveFromFolder, folders, allReadPages, fileTotalPages, allTags, showThumbnails = true,
 }: {
   folder: Folder;
   recents: RecentFile[];
@@ -616,6 +721,7 @@ function FolderView({
   folders: Folder[];
   allReadPages: Record<string, number[]>;
   fileTotalPages: Record<string, number>;
+  allTags: Record<string, string[]>;
   showThumbnails?: boolean;
 }) {
   const completedSet = new Set(library.completedPaths);
@@ -673,6 +779,7 @@ function FolderView({
               onRemove={() => onRemove(file.path)}
               onMoveToFolder={() => {}}
               onRemoveFromFolder={() => onRemoveFromFolder(file.path)}
+              tags={allTags[file.path] ?? []}
               inFolder
               showThumbnails={showThumbnails}
             />
@@ -789,14 +896,19 @@ function CompletedSection({
 
 // ── Main EmptyState ───────────────────────────────────────────────────────────
 
-export default function EmptyState({ onOpenFile, onOpenPath, openFiles = [], onResumeFile, readPages: extReadPages, fileTotalPages = {}, showThumbnails = true }: EmptyStateProps) {
+export default function EmptyState({ onOpenFile, onOpenPath, onImportUrl, onUpdateTags, openFiles = [], onResumeFile, readPages: extReadPages, fileTotalPages = {}, showThumbnails = true, tags = {} }: EmptyStateProps) {
   const [recents, setRecents] = useState<RecentFile[]>([]);
-  const [library, setLibrary] = useState<LibraryStore>({ completedPaths: [], folders: [], readPages: {}, annotations: {} });
+  const [library, setLibrary] = useState<LibraryStore>({ completedPaths: [], folders: [], readPages: {}, annotations: {}, tags: {} });
   const [draggingFile, setDraggingFile] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [newFolderId, setNewFolderId] = useState<string | null>(null);
+  const [showUrlImport, setShowUrlImport] = useState(false);
+  const [importUrl, setImportUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
 
   useEffect(() => {
     getRecentFiles().then(setRecents);
@@ -897,6 +1009,24 @@ export default function EmptyState({ onOpenFile, onOpenPath, openFiles = [], onR
     return id;
   }
 
+  async function handleImport(e: React.FormEvent) {
+    e.preventDefault();
+    const url = importUrl.trim();
+    if (!url || importing || !onImportUrl) return;
+    setImporting(true);
+    setImportError("");
+    try {
+      await onImportUrl(url);
+      setImportUrl("");
+      setShowUrlImport(false);
+    } catch (err) {
+      setImportError(String(err));
+      setTimeout(() => setImportError(""), 4000);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   function renameFolder(id: string, name: string) {
     updateLibrary({
       ...library,
@@ -948,11 +1078,37 @@ export default function EmptyState({ onOpenFile, onOpenPath, openFiles = [], onR
   const hasRecents = recents.length > 0;
   const hasContent = hasRecents || openFiles.length > 0 || library.folders.length > 0;
 
+  // Tags
+  const allTags: Record<string, string[]> = { ...(library.tags ?? {}), ...(tags ?? {}) };
+  const uniqueTags = [...new Set(Object.values(allTags).flat())].sort();
+  const tagFilteredRecents = tagFilter
+    ? recents.filter(r => (allTags[r.path] ?? []).includes(tagFilter))
+    : recents;
+
   // Non-completed recents not in any folder that's the "main" grid items
   const inAnyFolder = new Set(library.folders.flatMap(f => f.filePaths));
-  const activeRecents = recents.filter(r => !completedSet.has(r.path) && !inAnyFolder.has(r.path));
+  const activeRecents = tagFilteredRecents.filter(r => !completedSet.has(r.path) && !inAnyFolder.has(r.path));
 
   const openFolder = library.folders.find(f => f.id === openFolderId) ?? null;
+
+  function addTag(path: string, tag: string) {
+    const t = tag.trim().replace(/^#/, "");
+    if (!t) return;
+    const current = [...(allTags[path] ?? [])];
+    if (current.includes(t)) return;
+    const updated = { ...allTags, [path]: [...current, t] };
+    setLibrary(prev => ({ ...prev, tags: updated }));
+    saveLibrary({ ...library, tags: updated });
+    onUpdateTags?.(path, [...current, t]);
+  }
+
+  function removeTag(path: string, tag: string) {
+    const current = (allTags[path] ?? []).filter(t => t !== tag);
+    const updated = { ...allTags, [path]: current };
+    setLibrary(prev => ({ ...prev, tags: updated }));
+    saveLibrary({ ...library, tags: updated });
+    onUpdateTags?.(path, current);
+  }
 
   return (
     <div
@@ -1044,8 +1200,100 @@ export default function EmptyState({ onOpenFile, onOpenPath, openFiles = [], onR
                 <Plus size={12} strokeWidth={2.2} />
                 Open PDF
               </button>
+              {onImportUrl && (
+                <button
+                  onClick={() => { setShowUrlImport(v => !v); setImportError(""); }}
+                  title="Import PDF from URL"
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "8px 14px",
+                    background: showUrlImport ? "var(--bg-hover)" : "var(--bg-raised)",
+                    border: `1px solid ${showUrlImport ? "var(--border-default)" : "var(--border-faint)"}`,
+                    color: showUrlImport ? "var(--text-white)" : "var(--text-dim)",
+                    borderRadius: 8, fontSize: 12, fontWeight: 500, letterSpacing: "-0.01em",
+                    transition: "all var(--duration-fast) var(--ease-out)", cursor: "pointer",
+                  }}
+                  onMouseEnter={e => {
+                    if (showUrlImport) return;
+                    const el = e.currentTarget as HTMLElement;
+                    el.style.background = "var(--bg-hover)"; el.style.borderColor = "var(--border-default)"; el.style.color = "var(--text-primary)";
+                  }}
+                  onMouseLeave={e => {
+                    if (showUrlImport) return;
+                    const el = e.currentTarget as HTMLElement;
+                    el.style.background = "var(--bg-raised)"; el.style.borderColor = "var(--border-faint)"; el.style.color = "var(--text-dim)";
+                  }}
+                >
+                  <Download size={12} strokeWidth={2} />
+                  Import URL
+                </button>
+              )}
             </div>
           </div>
+
+          {/* URL import form */}
+          {showUrlImport && (
+            <form onSubmit={handleImport} style={{ marginBottom: 24, animation: "urlImportIn 250ms var(--ease-out) both" }}>
+              <style>{`@keyframes urlImportIn { 0% { opacity: 0; transform: translateY(-8px) scale(0.97); } 100% { opacity: 1; transform: translateY(0) scale(1); } }`}</style>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                background: "var(--bg-raised)",
+                border: `1px solid ${importError ? "rgba(239,68,68,0.35)" : "var(--border-default)"}`,
+                borderRadius: 9, padding: "6px 8px",
+                transition: "border-color var(--duration-fast) var(--ease-out)",
+              }}>
+                <input
+                  type="text"
+                  value={importUrl}
+                  onChange={e => setImportUrl(e.target.value)}
+                  placeholder="Paste a PDF link (arXiv, direct URL...)"
+                  autoFocus
+                  style={{
+                    flex: 1, height: 30,
+                    background: "transparent", border: "none", outline: "none",
+                    color: "var(--text-primary)", fontSize: 13,
+                    fontFamily: "inherit", letterSpacing: "-0.01em",
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={importing || !importUrl.trim()}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    padding: "5px 12px", borderRadius: 6,
+                    background: importing ? "var(--bg-active)" : "#4A9B7F",
+                    border: "none",
+                    color: "#fff", fontSize: 12, fontWeight: 500,
+                    letterSpacing: "-0.01em", cursor: importing ? "default" : "pointer",
+                    opacity: importing || !importUrl.trim() ? 0.5 : 1,
+                    transition: "opacity var(--duration-fast), background var(--duration-fast)",
+                  }}
+                >
+                  {importing ? (
+                    <><Loader2 size={11} strokeWidth={2} style={{ animation: "spin 1s linear infinite" }} /> Importing...</>
+                  ) : (
+                    <>Import</>
+                  )}
+                </button>
+              </div>
+              {importError && (
+                <div style={{ fontSize: 11, color: "#f87171", padding: "6px 4px 0", lineHeight: 1.4 }}>{importError}</div>
+              )}
+            </form>
+          )}
+
+          {/* Tag filter */}
+          {uniqueTags.length > 0 && !openFolder && (
+            <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", animation: "rowEnter var(--duration-fast) var(--ease-out) both" }}>
+              <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500, marginRight: 4 }}>Filter:</span>
+              {tagFilter && (
+                <TagPill label={tagFilter} active onClick={() => setTagFilter(null)} />
+              )}
+              {uniqueTags.filter(t => t !== tagFilter).slice(0, 15).map(tag => (
+                <TagPill key={tag} label={tag} onClick={() => setTagFilter(tag)} />
+              ))}
+            </div>
+          )}
 
           {/* Folder view */}
           {openFolder ? (
@@ -1053,6 +1301,7 @@ export default function EmptyState({ onOpenFile, onOpenPath, openFiles = [], onR
               folder={openFolder}
               recents={recents}
               library={library}
+              allTags={allTags}
               folders={library.folders}
               allReadPages={allReadPages}
               fileTotalPages={fileTotalPages}
@@ -1160,10 +1409,13 @@ export default function EmptyState({ onOpenFile, onOpenPath, openFiles = [], onR
                         folders={library.folders}
                         readPages={allReadPages[file.path] ?? []}
                         totalPages={fileTotalPages[file.path] ?? 0}
+                        tags={allTags[file.path] ?? []}
                         onOpen={() => onOpenPath(file.path, file.name)}
                         onToggleCompleted={() => toggleCompleted(file.path)}
                         onRemove={() => removeRecent(file.path)}
                         onMoveToFolder={folderId => moveToFolder(file.path, folderId)}
+                        onAddTag={tag => addTag(file.path, tag)}
+                        onRemoveTag={tag => removeTag(file.path, tag)}
                         showThumbnails={showThumbnails}
                       />
                     ))}

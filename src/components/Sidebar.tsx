@@ -1,4 +1,4 @@
-import { Plus, FolderOpen, PanelLeftClose, PanelLeftOpen, ChevronRight } from "lucide-react";
+import { Plus, PanelLeftClose, PanelLeftOpen, ChevronRight, House, Settings } from "lucide-react";
 import { PdfFile, OutlineItem } from "../types";
 import { useState, useEffect, memo } from "react";
 import * as pdfjsLib from "pdfjs-dist";
@@ -9,6 +9,10 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   onOpenFile: () => void;
   onPageJump: (page: number) => void;
+  onGoHome: () => void;
+  onGoSettings: () => void;
+  isHome: boolean;
+  isSettings: boolean;
 }
 
 async function resolveDestPage(pdf: pdfjsLib.PDFDocumentProxy, dest: OutlineItem["dest"]): Promise<number | null> {
@@ -110,7 +114,11 @@ const OutlineNode = memo(function OutlineNode({
 
 export default function Sidebar({
   activeFile, collapsed, onToggleCollapse, onOpenFile, onPageJump,
+  onGoHome, onGoSettings, isHome, isSettings,
 }: SidebarProps) {
+  const [hovered, setHovered] = useState(false);
+
+  const expanded = !collapsed || hovered;
 
   // Load pdf doc proxy for destination resolution only when needed.
   // Rust-generated outlines use __p__ prefix and don't need PDF resolution.
@@ -133,8 +141,11 @@ export default function Sidebar({
   const hasOutline = activeFile && activeFile.outline.length > 0;
 
   return (
-    <aside style={{
-      width: collapsed ? 40 : 216,
+    <aside
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+      width: expanded ? 216 : 40,
       flexShrink: 0,
       background: "var(--bg-sidebar)",
       borderRight: "1px solid var(--border-faint)",
@@ -153,7 +164,7 @@ export default function Sidebar({
           style={{
             flexShrink: 0, width: 26, height: 26, borderRadius: 6,
             display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--text-dim)",
+            color: "var(--text-dim)", background: "transparent",
             transition: "background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)",
           }}
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.color = "var(--text-white)"; }}
@@ -162,55 +173,45 @@ export default function Sidebar({
           {collapsed ? <PanelLeftOpen size={13} strokeWidth={1.8} /> : <PanelLeftClose size={13} strokeWidth={1.8} />}
         </button>
 
-
-        {!collapsed && !activeFile && (
-          <button
-            onClick={onOpenFile}
-            style={{
-              flex: 1, padding: "5px 10px",
-              background: "var(--bg-raised)",
-              border: "1px solid var(--border-default)",
-              color: "var(--text-primary)",
-              borderRadius: 7, fontSize: 12, fontWeight: 500,
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-              transition: "background var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out)",
-              letterSpacing: "-0.01em",
-            } as React.CSSProperties}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-strong)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-raised)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-default)"; }}
-          >
-            <Plus size={11} strokeWidth={2.5} />
-            Open PDF
-          </button>
-        )}
-
-        {!collapsed && activeFile && (
-          <button
-            onClick={onOpenFile}
-            title="Open PDF"
-            style={{
-              marginLeft: "auto", width: 26, height: 26, borderRadius: 6, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "var(--text-muted)",
-              transition: "background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
-          >
-            <Plus size={13} strokeWidth={2} />
-          </button>
-        )}
+        <button
+          onClick={onOpenFile}
+          title="Open PDF"
+          style={{
+            marginLeft: "auto", width: 26, height: 26, borderRadius: 6, flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: "var(--text-muted)", background: "transparent",
+            transition: "background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out)",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
+        >
+          <Plus size={13} strokeWidth={2} />
+        </button>
       </div>
 
-      {/* Content */}
-      {!collapsed && (
-        <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px 12px" }}>
+      {expanded && (
+        <>
+          {/* Navigation */}
+          <div style={{ padding: "0 8px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
+            <NavItem
+              icon={<House size={13} strokeWidth={1.8} />}
+              label="Library"
+              active={isHome}
+              onClick={onGoHome}
+            />
+            <NavItem
+              icon={<Settings size={13} strokeWidth={1.8} />}
+              label="Settings"
+              active={isSettings}
+              onClick={onGoSettings}
+            />
+          </div>
 
-          {/* Outline */}
-          {activeFile ? (
-            <>
+          {/* Content */}
+          {activeFile && (
+            <div style={{ flex: 1, overflowY: "auto", padding: "4px 8px 12px", borderTop: "1px solid var(--border-faint)" }}>
               <div style={{
-                padding: "4px 8px 8px",
+                padding: "8px 8px 12px",
                 fontSize: 11, fontWeight: 600,
                 color: "var(--text-dim)",
                 letterSpacing: "-0.01em",
@@ -235,19 +236,50 @@ export default function Sidebar({
                   No outline available
                 </div>
               )}
-            </>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "24px 16px", gap: 8 }}>
-              <div style={{ width: 32, height: 32, background: "var(--bg-raised)", border: "1px solid var(--border-faint)", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <FolderOpen size={14} color="var(--text-muted)" strokeWidth={1.5} />
-              </div>
-              <span style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", lineHeight: 1.5 }}>
-                No file open
-              </span>
             </div>
           )}
-        </div>
+        </>
       )}
     </aside>
+  );
+}
+
+function NavItem({ icon, label, active, onClick }: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        width: "100%", padding: "6px 8px",
+        borderRadius: 6,
+        background: active ? "var(--bg-active)" : "transparent",
+        border: `1px solid ${active ? "var(--border-default)" : "transparent"}`,
+        color: active ? "var(--text-white)" : "var(--text-dim)",
+        cursor: "pointer",
+        fontSize: 12, fontWeight: active ? 500 : 400,
+        letterSpacing: "-0.01em",
+        transition: "background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out)",
+      }}
+      onMouseEnter={e => {
+        if (active) return;
+        const el = e.currentTarget as HTMLElement;
+        el.style.background = "var(--bg-hover)";
+        el.style.color = "var(--text-primary)";
+      }}
+      onMouseLeave={e => {
+        if (active) return;
+        const el = e.currentTarget as HTMLElement;
+        el.style.background = "transparent";
+        el.style.color = "var(--text-dim)";
+      }}
+    >
+      <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>
+      {label}
+    </button>
   );
 }
