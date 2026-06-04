@@ -606,10 +606,54 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
 // ── Ollama ────────────────────────────────────────────────────────────────────
 
+#[derive(Serialize)]
+pub struct OllamaStatusResult {
+    pub running: bool,
+    pub models: Vec<String>,
+}
+
+/// Checks Ollama via direct HTTP (bypasses WebView2 fetch, which can be blocked
+/// by CORS / private-network-access in packaged Tauri 2 builds where the webview
+/// origin is `tauri://localhost`).
+#[tauri::command]
+async fn check_ollama() -> OllamaStatusResult {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let resp = client.get("http://127.0.0.1:11434/api/tags").send().await;
+    let Ok(resp) = resp else {
+        return OllamaStatusResult { running: false, models: vec![] };
+    };
+    if !resp.status().is_success() {
+        return OllamaStatusResult { running: false, models: vec![] };
+    }
+    let Ok(json) = resp.json::<serde_json::Value>().await else {
+        return OllamaStatusResult { running: true, models: vec![] };
+    };
+    let models: Vec<String> = json["models"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|m| m["name"].as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    OllamaStatusResult { running: true, models }
+}
+
 /// Spawns `ollama serve` as a detached background process.
-/// Returns `Ok(true)` if launched, `Ok(false)` if not found on any known path.
+/// Returns `Ok(true)` if launched (or already running), `Ok(false)` if not found on any known path.
 #[tauri::command]
 async fn start_ollama() -> Result<bool, String> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    // If Ollama is already listening on 11434, nothing to do — avoid "bind: address in use" on spawn.
+    if TcpStream::connect_timeout(
+        &"127.0.0.1:11434".parse().unwrap(),
+        Duration::from_millis(200),
+    ).is_ok() {
+        return Ok(true);
+    }
+
     use std::process::Command;
 
     fn try_spawn(p: &str) -> std::io::Result<std::process::Child> {
@@ -677,6 +721,7 @@ pub fn run() {
             check_for_update,
             install_update,
             start_ollama,
+            check_ollama,
             import_from_url,
         ])
         .run(tauri::generate_context!())

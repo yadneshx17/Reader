@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PDF Reader",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "identifier": "com.pdfreader.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -28,7 +28,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0Njk4OTcwOTEwQTg5RjcKUldUM2lRcVJjSWxweEUyWjNGWTRmMFZpSTlhTi9SbnJQaTJhZHBad01xSFdMdkxoU1Z4VnVFZjgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxQTUzQjNFNTM2NUU3RjgKUldUNDUyVlRQanVsd1JXOHF1enZ1dGFvMFhOM3ZhZXkzRE1PNGNPZ3YzczlJekpuSExmWlEyZkgK",
       "endpoints": [
         "https://github.com/anurag12-webster/Reader/releases/latest/download/latest.json"
       ]

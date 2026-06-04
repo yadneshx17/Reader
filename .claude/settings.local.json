@@ -3,7 +3,10 @@
     "allow": [
       "Bash(cargo check)",
       "Bash(npx tsc --noEmit)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:ollama.com)",
+      "Bash(curl -L \"https://ollama.com/public/ollama.png\" -o \"C:/Users/ASUS/Documents/noty/nooter/src/assets/ollama.png\")"
     ]
   }
 }

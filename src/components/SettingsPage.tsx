@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, PdfTheme, PageLayout } from "../types";
 import { Toggle, SegmentedControl, InfoBox, LinkBtn } from "../ui";
 
-const APP_VERSION = "0.5.1";
+const APP_VERSION = "0.6.1";
 
 type NavItem = "general" | "reading" | "ai" | "library" | "updates" | "privacy" | "shortcuts";
 

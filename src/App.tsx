@@ -48,10 +48,16 @@ export default function App() {
   // Auto-start Ollama if enabled in settings
   useEffect(() => {
     if (!settings.ollamaAutoStart) return;
-    const controller = new AbortController();
-    fetch("http://127.0.0.1:11434/api/tags", { signal: controller.signal })
-      .catch(() => { if (!controller.signal.aborted) invoke<string>("start_ollama").then(msg => { if (msg !== "true") setOllamaError(msg); }).catch(e => setOllamaError(e)); });
-    return () => controller.abort();
+    let cancelled = false;
+    (async () => {
+      // Use the Rust check — webview fetch to 127.0.0.1 is unreliable in packaged builds.
+      const status = await invoke<{ running: boolean }>("check_ollama").catch(() => ({ running: false }));
+      if (cancelled || status.running) return;
+      invoke<string>("start_ollama").then(msg => {
+        if (!cancelled && msg !== "true") setOllamaError(msg);
+      }).catch(e => { if (!cancelled) setOllamaError(String(e)); });
+    })();
+    return () => { cancelled = true; };
   }, [settings.ollamaAutoStart]);
 
   const updateSettings = useCallback((patch: Partial<typeof settings>) => {

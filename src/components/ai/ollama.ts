@@ -2,22 +2,18 @@
  * Ollama API helpers — status check, streaming chat.
  */
 
+import { invoke } from "@tauri-apps/api/core";
+
 export const OLLAMA_BASE = "http://127.0.0.1:11434";
 
 export type OllamaStatus = "loading" | "not_installed" | "not_running" | "starting" | "ready";
 
 export async function checkOllama(): Promise<{ status: OllamaStatus; models: string[] }> {
-  try {
-    const r = await fetch(`${OLLAMA_BASE}/api/tags`, { signal: AbortSignal.timeout(2000) });
-    if (!r.ok) return { status: "not_running", models: [] };
-    const d = await r.json();
-    const models: string[] = (d.models ?? []).map((m: { name: string }) => m.name);
-    return { status: "ready", models };
-  } catch {
-    // In Tauri's webview, any connection failure comes as a generic fetch error —
-    // can't distinguish "not installed" from "not running" via fetch alone.
-    return { status: "not_running", models: [] };
-  }
+  // Route through the Rust `check_ollama` command — the webview's fetch to
+  // 127.0.0.1 is unreliable in packaged Tauri 2 (opaque origin / CORS).
+  const r = await invoke<{ running: boolean; models: string[] }>("check_ollama").catch(() => ({ running: false, models: [] as string[] }));
+  if (!r.running) return { status: "not_running", models: [] };
+  return { status: "ready", models: r.models };
 }
 
 /** Normalize model output: convert \[...\] and \(...\) to $$...$$ / $...$ for KaTeX */

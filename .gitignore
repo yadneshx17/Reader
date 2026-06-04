@@ -3,6 +3,9 @@ dist
 dist-ssr
 *.local
 
+# Tauri signing keys (NEVER commit)
+.tauri/
+
 # Rust build output
 src-tauri/target/
 src-tauri/gen/
